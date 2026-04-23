@@ -1,26 +1,34 @@
 import { useEffect, useMemo, useState } from 'react'
-import { GeoJSON, MapContainer, TileLayer } from 'react-leaflet'
-import { feature } from 'topojson-client'
+import { GeoJSON, MapContainer, TileLayer, ZoomControl } from 'react-leaflet'
+import 'leaflet/dist/leaflet.css'
+import { feature as topojsonFeature } from 'topojson-client'
 
 function normalizeText(value) {
-  return (value || '')
-    .toString()
+  return String(value || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/ș/g, 's')
-    .replace(/ş/g, 's')
     .replace(/ț/g, 't')
     .replace(/ţ/g, 't')
+    .replace(/ș/g, 's')
+    .replace(/ş/g, 's')
     .replace(/ă/g, 'a')
-    .replace(/î/g, 'i')
     .replace(/â/g, 'a')
-    .toLowerCase()
+    .replace(/î/g, 'i')
+    .replace(/[^A-Z0-9]+/gi, '')
+    .toUpperCase()
     .trim()
 }
 
-function detectObjectName(topology) {
-  const keys = Object.keys(topology.objects || {})
-  return keys[0]
+function getGeoJsonFromAny(input) {
+  if (!input) return null
+  if (input.type === 'FeatureCollection') return input
+  if (input.type === 'Feature') return { type: 'FeatureCollection', features: [input] }
+  if (input.type === 'Topology' && input.objects) {
+    const firstKey = Object.keys(input.objects)[0]
+    if (!firstKey) return null
+    return topojsonFeature(input, input.objects[firstKey])
+  }
+  return null
 }
 
 function formatLei(value) {
@@ -28,43 +36,89 @@ function formatLei(value) {
   return num.toLocaleString('ro-RO', {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
-  })
+  }) + ' lei'
 }
 
-function getCountyStyle(judet, selectedJudet) {
-  const areAvizeMariComplete =
-    judet?.dr_igpr_status === 'emis' &&
-    judet?.ipj_status === 'emis' &&
-    judet?.ipj_sig_circ_status === 'emis' &&
-    judet?.cnair_status === 'emis' &&
-    judet?.cj_status === 'emis'
+function formatPercent(value) {
+  return Number(value || 0).toLocaleString('ro-RO', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }) + '%'
+}
 
-  const fillColor = areAvizeMariComplete ? '#d9f99d' : '#e5e7eb'
-  const borderColor = areAvizeMariComplete ? '#84cc16' : '#94a3b8'
-  const isSelected = selectedJudet?.cod_judet === judet?.cod_judet
+function safeText(value, fallback = '-') {
+  if (value === null || value === undefined || value === '') return fallback
+  return String(value)
+}
+
+function getCountyStyle(judet, isSelected) {
+  const procent = Number(judet?.procent_montat || 0)
+
+  let fillColor = '#f3f4f6'
+  if (procent >= 100) fillColor = '#dcfce7'
+  else if (procent > 0) fillColor = '#dbeafe'
 
   return {
-    color: isSelected ? '#2563eb' : borderColor,
-    weight: isSelected ? 3 : 1.2,
+    color: isSelected ? '#2563eb' : '#94a3b8',
+    weight: isSelected ? 3 : 1.5,
     fillColor,
-    fillOpacity: 0.88,
+    fillOpacity: isSelected ? 0.9 : 0.72,
+    opacity: 1,
   }
 }
 
-export default function RomaniaMap({ judete, selectedJudet, onSelectJudet, isFullscreen }) {
+function buildTooltipHtml(judet) {
+  return `
+    <div class="county-tooltip county-tooltip-rich">
+      <div class="county-tooltip-title">${judet.nume_judet} (${judet.cod_judet})</div>
+
+      <div class="county-tooltip-section-title">General</div>
+      <div class="county-tooltip-grid">
+        <div>Total puncte</div><div>${safeText(judet.total_puncte, '0')}</div>
+        <div>Puncte montate</div><div>${safeText(judet.puncte_montate_actual ?? judet.puncte_montate ?? judet.stalpi_montati, '0')}</div>
+        <div>Puncte rămase</div><div>${safeText(judet.puncte_ramase_actual ?? judet.puncte_ramase_montaj ?? judet.stalpi_ramasi, '0')}</div>
+        <div>Scos IGPR</div><div>${safeText(judet.puncte_eliminate_igpr, '0')}</div>
+        <div>Eligibile montaj</div><div>${safeText(judet.puncte_eligibile_montaj, '0')}</div>
+        <div>T17</div><div>${safeText(judet.total_t17, '0')}</div>
+        <div>PV UAT</div><div>${safeText(judet.total_pv_uat, '0')}</div>
+      </div>
+
+      <div class="county-tooltip-section-title">Montaj</div>
+      <div class="county-tooltip-grid">
+        <div>Stâlpi montați</div><div>${safeText(judet.stalpi_montati, '0')}</div>
+        <div>Stâlpi rămași</div><div>${safeText(judet.stalpi_ramasi, '0')}</div>
+        <div>În verificare</div><div>${safeText(judet.stalpi_in_verificare, '0')}</div>
+        <div>% montat</div><div>${formatPercent(judet.procent_montat)}</div>
+      </div>
+
+      <div class="county-tooltip-section-title">Avizare</div>
+      <div class="county-tooltip-grid">
+        <div>DR_IGPR</div><div>${safeText(judet.dr_igpr_status, 'nesolicitat')}</div>
+        <div>IPJ</div><div>${safeText(judet.ipj_status, 'nesolicitat')}</div>
+        <div>IPJ_SIG_CIRC</div><div>${safeText(judet.ipj_sig_circ_status, 'nesolicitat')}</div>
+        <div>CNAIR</div><div>${safeText(judet.cnair_status, 'nesolicitat')}</div>
+        <div>CJ</div><div>${safeText(judet.cj_status, 'nesolicitat')}</div>
+        <div>UAT cu aviz</div><div>${safeText(judet.uat_cu_aviz, '0')} / ${safeText(judet.uat_total, '0')}</div>
+      </div>
+
+      <div class="county-tooltip-section-title">Costuri</div>
+      <div class="county-tooltip-grid">
+        <div>Materiale</div><div>${formatLei(judet.cost_materiale)}</div>
+        <div>Manoperă</div><div>${formatLei(judet.cost_manopera)}</div>
+        <div>Total</div><div>${formatLei(judet.cost_total)}</div>
+      </div>
+
+      <div class="county-tooltip-section-title">Financiar</div>
+      <div class="county-tooltip-grid">
+        <div>Venit total</div><div>${formatLei(judet.venit_total)}</div>
+        <div>Dif. venit-cost</div><div>${formatLei(judet.diferenta_venit_cost)}</div>
+      </div>
+    </div>
+  `
+}
+
+export default function RomaniaMap({ judete, selectedJudet, onSelectJudet }) {
   const [geoData, setGeoData] = useState(null)
-
-  useEffect(() => {
-    async function loadMap() {
-      const response = await fetch('/romania-counties.json')
-      const topology = await response.json()
-      const objectName = detectObjectName(topology)
-      const geojson = feature(topology, topology.objects[objectName])
-      setGeoData(geojson)
-    }
-
-    loadMap()
-  }, [])
 
   const judeteByName = useMemo(() => {
     const map = new Map()
@@ -74,121 +128,101 @@ export default function RomaniaMap({ judete, selectedJudet, onSelectJudet, isFul
     return map
   }, [judete])
 
-  function findJudet(props) {
-    const possibleNames = [
-      props?.NAME_1,
-      props?.name,
-      props?.countyName,
-      props?.judet,
-      props?.nume,
-    ].filter(Boolean)
-
-    for (const name of possibleNames) {
-      const judet = judeteByName.get(normalizeText(name))
-      if (judet) return judet
+  useEffect(() => {
+    async function loadGeo() {
+      try {
+        const response = await fetch('/romania-counties.json')
+        const raw = await response.json()
+        const geo = getGeoJsonFromAny(raw)
+        setGeoData(geo)
+      } catch (error) {
+        console.error('Nu am putut încărca harta județelor:', error)
+      }
     }
 
-    return null
+    loadGeo()
+  }, [])
+
+  const geoJsonWithData = useMemo(() => {
+    if (!geoData?.features) return null
+
+    const features = geoData.features.map((featureItem) => {
+      const props = featureItem.properties || {}
+      const countyName = props.NAME_1 || props.name || props.NAME || ''
+      const matchedJudet = judeteByName.get(normalizeText(countyName)) || null
+
+      return {
+        ...featureItem,
+        properties: {
+          ...props,
+          __judetData: matchedJudet,
+        },
+      }
+    })
+
+    return {
+      ...geoData,
+      features,
+    }
+  }, [geoData, judeteByName])
+
+  function onEachFeature(feature, layer) {
+    const judet = feature.properties?.__judetData
+    if (!judet) return
+
+    layer.bindTooltip(buildTooltipHtml(judet), {
+      sticky: true,
+      direction: 'auto',
+      offset: [0, 10],
+      opacity: 1,
+      className: 'county-tooltip-wrapper',
+    })
+
+    layer.on({
+      click: () => onSelectJudet?.(judet),
+      mouseover: (e) => {
+        e.target.setStyle({
+          weight: 3,
+          color: '#2563eb',
+          fillOpacity: 0.9,
+        })
+      },
+      mouseout: (e) => {
+        const isSelected = selectedJudet?.cod_judet === judet.cod_judet
+        e.target.setStyle(getCountyStyle(judet, isSelected))
+      },
+    })
+  }
+
+  function styleFeature(feature) {
+    const judet = feature.properties?.__judetData
+    const isSelected = selectedJudet?.cod_judet === judet?.cod_judet
+    return getCountyStyle(judet, isSelected)
   }
 
   return (
-    <div
-      style={{
-        height: isFullscreen ? 'calc(100vh - 84px)' : '560px',
-        borderRadius: isFullscreen ? '0' : '18px',
-        overflow: 'hidden',
-      }}
-    >
+    <div className="romania-map-shell">
       <MapContainer
-        center={[45.8, 24.9]}
+        center={[45.9432, 24.9668]}
         zoom={7}
-        style={{ height: '100%', width: '100%' }}
-        scrollWheelZoom={true}
+        minZoom={6}
+        maxZoom={10}
+        zoomControl={false}
+        className="romania-map-canvas"
       >
+        <ZoomControl position="topleft" />
+
         <TileLayer
           attribution="&copy; OpenStreetMap contributors"
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        {geoData && (
+        {geoJsonWithData && (
           <GeoJSON
-            data={geoData}
-            style={(feat) => {
-              const judet = findJudet(feat?.properties || {})
-              return getCountyStyle(judet, selectedJudet)
-            }}
-            onEachFeature={(feat, layer) => {
-              const judet = findJudet(feat?.properties || {})
-              const rawName = feat?.properties?.NAME_1 || 'Necunoscut'
-
-              const nume = judet?.nume_judet || rawName
-              const cod = judet?.cod_judet || '-'
-              const total = judet?.total_puncte || 0
-              const eligibileMontaj = judet?.puncte_eligibile_montaj || 0
-              const montate = judet?.puncte_montate || 0
-              const ramaseMontaj = judet?.puncte_ramase_montaj || 0
-
-              const drIgprStatus = judet?.dr_igpr_status || 'nesolicitat'
-              const ipjStatus = judet?.ipj_status || 'nesolicitat'
-              const ipjSigCircStatus = judet?.ipj_sig_circ_status || 'nesolicitat'
-              const cnairStatus = judet?.cnair_status || 'nesolicitat'
-              const cjStatus = judet?.cj_status || 'nesolicitat'
-              const uatTotal = judet?.uat_total || 0
-              const uatCuAviz = judet?.uat_cu_aviz || 0
-
-              const costTotal = judet?.cost_total || 0
-              const nrObiective = judet?.nr_obiective || 0
-              const venitTotal = judet?.venit_total || 0
-              const diferentaVenitCost = judet?.diferenta_venit_cost || 0
-
-              const tooltipHtml = `
-                <div class="county-tooltip county-tooltip-compact">
-                  <div class="county-tooltip-title">${nume}</div>
-                  <div class="county-tooltip-subtitle">Cod: ${cod}</div>
-
-                  <div class="county-tooltip-grid county-tooltip-grid-compact">
-                    <div class="tooltip-section">
-                      <div class="tooltip-section-title">Operațional</div>
-                      <div class="tooltip-row"><span>Total</span><strong>${total}</strong></div>
-                      <div class="tooltip-row"><span>Eligibile</span><strong>${eligibileMontaj}</strong></div>
-                      <div class="tooltip-row"><span>Montate</span><strong>${montate}</strong></div>
-                      <div class="tooltip-row"><span>Rămase</span><strong>${ramaseMontaj}</strong></div>
-                    </div>
-
-                    <div class="tooltip-section">
-                      <div class="tooltip-section-title">Avizare</div>
-                      <div class="tooltip-row"><span>DR_IGPR</span><strong>${drIgprStatus}</strong></div>
-                      <div class="tooltip-row"><span>IPJ</span><strong>${ipjStatus}</strong></div>
-                      <div class="tooltip-row"><span>IPJ_SIG_CIRC</span><strong>${ipjSigCircStatus}</strong></div>
-                      <div class="tooltip-row"><span>CNAIR</span><strong>${cnairStatus}</strong></div>
-                      <div class="tooltip-row"><span>CJ</span><strong>${cjStatus}</strong></div>
-                      <div class="tooltip-row"><span>UAT aviz</span><strong>${uatCuAviz} / ${uatTotal}</strong></div>
-                    </div>
-
-                    <div class="tooltip-section">
-                      <div class="tooltip-section-title">Financiar</div>
-                      <div class="tooltip-row"><span>Cost total</span><strong>${formatLei(costTotal)} lei</strong></div>
-                      <div class="tooltip-row"><span>Venit</span><strong>${formatLei(venitTotal)} lei</strong></div>
-                      <div class="tooltip-row"><span>Diferență</span><strong>${formatLei(diferentaVenitCost)} lei</strong></div>
-                      <div class="tooltip-row"><span>Obiective</span><strong>${nrObiective}</strong></div>
-                    </div>
-                  </div>
-                </div>
-              `
-
-              layer.bindTooltip(tooltipHtml, {
-                direction: 'auto',
-                sticky: true,
-                opacity: 1,
-                className: 'county-tooltip-wrapper',
-              })
-
-              layer.on({
-                click: () => {
-                  if (judet) onSelectJudet(judet)
-                },
-              })
-            }}
+            key={selectedJudet?.cod_judet || 'all'}
+            data={geoJsonWithData}
+            style={styleFeature}
+            onEachFeature={onEachFeature}
           />
         )}
       </MapContainer>

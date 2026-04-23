@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import './App.css'
 import RomaniaMap from './RomaniaMap'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'
 
 function formatLei(value) {
   const num = Number(value || 0)
@@ -11,40 +12,12 @@ function formatLei(value) {
   })} lei`
 }
 
-function KpiCard({ label, value }) {
-  return (
-    <div
-      style={{
-        border: '1px solid rgba(60,60,67,0.12)',
-        borderRadius: '12px',
-        padding: '10px 12px',
-        background: 'rgba(255,255,255,0.72)',
-      }}
-    >
-      <div
-        style={{
-          fontSize: '11px',
-          color: '#6e6e73',
-          textTransform: 'uppercase',
-          letterSpacing: '0.04em',
-          marginBottom: '4px',
-          fontWeight: 700,
-        }}
-      >
-        {label}
-      </div>
-      <div
-        style={{
-          fontSize: '18px',
-          fontWeight: 700,
-          letterSpacing: '-0.02em',
-          lineHeight: 1.1,
-        }}
-      >
-        {value}
-      </div>
-    </div>
-  )
+function formatPercent(value) {
+  const num = Number(value || 0)
+  return `${num.toLocaleString('ro-RO', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })}%`
 }
 
 export default function App() {
@@ -55,14 +28,28 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [error, setError] = useState('')
-  const [isMapFullscreen, setIsMapFullscreen] = useState(false)
-
-  const mapPanelRef = useRef(null)
 
   const [routeFilter, setRouteFilter] = useState('')
   const [indicatorFilter, setIndicatorFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [searchFilter, setSearchFilter] = useState('')
+
+  const mapPanelRef = useRef(null)
+
+  async function handleToggleFullscreen() {
+    const el = mapPanelRef.current
+    if (!el) return
+
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen()
+      } else {
+        await el.requestFullscreen()
+      }
+    } catch (fullscreenError) {
+      console.error('Fullscreen error:', fullscreenError)
+    }
+  }
 
   useEffect(() => {
     async function loadJudete() {
@@ -70,16 +57,47 @@ export default function App() {
         setLoading(true)
         setError('')
 
-        const response = await fetch(`${API_BASE_URL}/api/harta/judete`)
-        if (!response.ok) {
-          throw new Error('Nu am putut încărca județele')
+        const [dashboardResponse, montajResponse] = await Promise.all([
+          fetch(`${API_BASE}/api/harta/judete`),
+          fetch(`${API_BASE}/api/montaj/judete-summary`),
+        ])
+
+        if (!dashboardResponse.ok) {
+          throw new Error('Nu am putut încărca județele din dashboard')
         }
 
-        const data = await response.json()
-        setJudete(data)
+        if (!montajResponse.ok) {
+          throw new Error('Nu am putut încărca progresul de montaj')
+        }
 
-        if (data.length > 0) {
-          await handleSelectJudet(data[0])
+        const dashboardData = await dashboardResponse.json()
+        const montajData = await montajResponse.json()
+
+        const montajMap = new Map(montajData.map((item) => [item.cod_judet, item]))
+
+        const merged = dashboardData.map((judet) => {
+          const montaj = montajMap.get(judet.cod_judet) || {}
+
+          return {
+            ...judet,
+            stalpi_eligibili: montaj.stalpi_eligibili || 0,
+            stalpi_montati: montaj.stalpi_montati || 0,
+            stalpi_ramasi: montaj.stalpi_ramasi || 0,
+            stalpi_in_verificare: montaj.stalpi_in_verificare || 0,
+            procent_montat: Number(montaj.procent_montat || 0),
+            puncte_montate_actual:
+              montaj.stalpi_montati || judet.puncte_montate || 0,
+            puncte_ramase_actual:
+              montaj.stalpi_ramasi || judet.puncte_ramase_montaj || 0,
+            marja_estimativa: montaj.marja_estimativa ?? null,
+            marja_la_zi: montaj.marja_la_zi ?? null,
+          }
+        })
+
+        setJudete(merged)
+
+        if (merged.length > 0) {
+          await handleSelectJudet(merged[0], montajData)
         }
       } catch (err) {
         setError(err.message || 'A apărut o eroare')
@@ -91,30 +109,7 @@ export default function App() {
     loadJudete()
   }, [])
 
-  useEffect(() => {
-    function handleFullscreenChange() {
-      setIsMapFullscreen(document.fullscreenElement === mapPanelRef.current)
-    }
-
-    document.addEventListener('fullscreenchange', handleFullscreenChange)
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange)
-    }
-  }, [])
-
-  async function toggleMapFullscreen() {
-    try {
-      if (!document.fullscreenElement) {
-        await mapPanelRef.current?.requestFullscreen()
-      } else if (document.fullscreenElement === mapPanelRef.current) {
-        await document.exitFullscreen()
-      }
-    } catch (err) {
-      console.error('Fullscreen error:', err)
-    }
-  }
-
-  async function handleSelectJudet(judet) {
+  async function handleSelectJudet(judet, montajSummaryDataFromLoad = null) {
     try {
       setSelectedJudet(judet)
       setDetailsLoading(true)
@@ -122,10 +117,14 @@ export default function App() {
       setIndicatorFilter('')
       setStatusFilter('')
       setSearchFilter('')
+      setError('')
 
-      const [detailsResponse, puncteResponse] = await Promise.all([
-        fetch(`${API_BASE_URL}/api/harta/judete/${judet.cod_judet}`),
-        fetch(`${API_BASE_URL}/api/harta/judete/${judet.cod_judet}/puncte`),
+      const [detailsResponse, puncteResponse, montajSummaryResponse] = await Promise.all([
+        fetch(`${API_BASE}/api/harta/judete/${judet.cod_judet}`),
+        fetch(`${API_BASE}/api/harta/judete/${judet.cod_judet}/puncte`),
+        montajSummaryDataFromLoad
+          ? Promise.resolve({ ok: true, json: async () => montajSummaryDataFromLoad })
+          : fetch(`${API_BASE}/api/montaj/judete-summary`),
       ])
 
       if (!detailsResponse.ok) {
@@ -136,10 +135,37 @@ export default function App() {
         throw new Error('Nu am putut încărca punctele județului')
       }
 
+      if (!montajSummaryResponse.ok) {
+        throw new Error('Nu am putut încărca sumarul de montaj')
+      }
+
       const detailsData = await detailsResponse.json()
       const puncteData = await puncteResponse.json()
+      const montajSummaryData = await montajSummaryResponse.json()
 
-      setJudetDetails(detailsData)
+      const montajSummary =
+        montajSummaryData.find((x) => x.cod_judet === judet.cod_judet) || {}
+
+      const mergedSummary = {
+        ...detailsData.summary,
+        stalpi_eligibili: montajSummary.stalpi_eligibili || 0,
+        stalpi_montati: montajSummary.stalpi_montati || 0,
+        stalpi_ramasi: montajSummary.stalpi_ramasi || 0,
+        stalpi_in_verificare: montajSummary.stalpi_in_verificare || 0,
+        procent_montat: Number(montajSummary.procent_montat || 0),
+        puncte_montate_actual:
+          montajSummary.stalpi_montati || detailsData.summary.puncte_montate || 0,
+        puncte_ramase_actual:
+          montajSummary.stalpi_ramasi || detailsData.summary.puncte_ramase_montaj || 0,
+        marja_estimativa: montajSummary.marja_estimativa ?? null,
+        marja_la_zi: montajSummary.marja_la_zi ?? null,
+      }
+
+      setJudetDetails({
+        ...detailsData,
+        summary: mergedSummary,
+      })
+
       setJudetPuncte(puncteData)
     } catch (err) {
       setError(err.message || 'A apărut o eroare la încărcarea fișei județului')
@@ -173,8 +199,6 @@ export default function App() {
     })
   }, [judetPuncte, routeFilter, indicatorFilter, statusFilter, searchFilter])
 
-  const s = judetDetails?.summary
-
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -187,33 +211,19 @@ export default function App() {
 
       {!loading && !error && (
         <>
-          <section
-            ref={mapPanelRef}
-            className={`map-panel ${isMapFullscreen ? 'map-panel-fullscreen' : ''}`}
-          >
+          <section className="map-panel" ref={mapPanelRef}>
             <div className="map-panel-header">
-              <h2>Hartă județe</h2>
-
-              <div
-                style={{
-                  display: 'flex',
-                  gap: '8px',
-                  alignItems: 'center',
-                  flexWrap: 'wrap',
-                }}
-              >
-                <div className="map-legend">
-                  <span className="legend-pill legend-complete">avize mari complete</span>
-                  <span className="legend-pill legend-neutral">rest județe</span>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={toggleMapFullscreen}
-                  className="fullscreen-button"
-                >
-                  {isMapFullscreen ? 'Ieșire fullscreen' : 'Fullscreen'}
+              <div className="map-panel-title-row">
+                <h2>Hartă județe</h2>
+                <button type="button" className="fullscreen-btn" onClick={handleToggleFullscreen}>
+                  Full screen
                 </button>
+              </div>
+
+              <div className="map-legend">
+                <span className="legend-pill legend-start">0% montat</span>
+                <span className="legend-pill legend-progress">progres montaj</span>
+                <span className="legend-pill legend-mounted">100% montat</span>
               </div>
             </div>
 
@@ -221,7 +231,6 @@ export default function App() {
               judete={judete}
               selectedJudet={selectedJudet}
               onSelectJudet={handleSelectJudet}
-              isFullscreen={isMapFullscreen}
             />
           </section>
 
@@ -231,128 +240,83 @@ export default function App() {
 
               {detailsLoading && <p>Se încarcă detaliile...</p>}
 
-              {!detailsLoading && s && (
+              {!detailsLoading && judetDetails?.summary && (
                 <>
                   <div className="details-card">
                     <h3>
-                      {s.nume_judet} ({s.cod_judet})
+                      {judetDetails.summary.nume_judet} ({judetDetails.summary.cod_judet})
                     </h3>
 
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
-                        gap: '10px',
-                        marginBottom: '12px',
-                      }}
-                    >
-                      <KpiCard label="Total puncte" value={s.total_puncte} />
-                      <KpiCard label="Eligibile" value={s.puncte_eligibile_montaj || 0} />
-                      <KpiCard label="Montate" value={s.puncte_montate || 0} />
-                      <KpiCard label="Rămase" value={s.puncte_ramase_montaj || 0} />
-                    </div>
+                    <p>Total puncte: {judetDetails.summary.total_puncte}</p>
+                    <p>Puncte eliminate IGPR: {judetDetails.summary.puncte_eliminate_igpr}</p>
+                    <p>Puncte eligibile montaj: {judetDetails.summary.puncte_eligibile_montaj || 0}</p>
+                    <p>Puncte montate: {judetDetails.summary.puncte_montate_actual || 0}</p>
+                    <p>Puncte rămase: {judetDetails.summary.puncte_ramase_actual || 0}</p>
 
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-                        gap: '10px',
-                        marginBottom: '12px',
-                      }}
-                    >
-                      <KpiCard label="Cost total" value={formatLei(s.cost_total)} />
-                      <KpiCard label="Venit total" value={formatLei(s.venit_total)} />
-                      <KpiCard label="Diferență" value={formatLei(s.diferenta_venit_cost)} />
-                    </div>
+                    <hr />
 
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: '1fr 1fr',
-                        gap: '10px',
-                      }}
-                    >
-                      <div
-                        style={{
-                          border: '1px solid rgba(60,60,67,0.12)',
-                          borderRadius: '12px',
-                          padding: '10px 12px',
-                          background: 'rgba(255,255,255,0.72)',
-                        }}
-                      >
-                        <p><strong>Avizare</strong></p>
-                        <p>DR_IGPR: {s.dr_igpr_status || 'nesolicitat'}</p>
-                        <p>IPJ: {s.ipj_status || 'nesolicitat'}</p>
-                        <p>IPJ_SIG_CIRC: {s.ipj_sig_circ_status || 'nesolicitat'}</p>
-                        <p>CNAIR: {s.cnair_status || 'nesolicitat'}</p>
-                        <p>CJ: {s.cj_status || 'nesolicitat'}</p>
-                        <p>UAT cu aviz: {s.uat_cu_aviz || 0} / {s.uat_total || 0}</p>
-                      </div>
+                    <p><strong>Montaj stâlpi</strong></p>
+                    <p>Stâlpi eligibili: {judetDetails.summary.stalpi_eligibili || 0}</p>
+                    <p>Stâlpi montați: {judetDetails.summary.stalpi_montati || 0}</p>
+                    <p>Stâlpi rămași: {judetDetails.summary.stalpi_ramasi || 0}</p>
+                    <p>Stâlpi în verificare: {judetDetails.summary.stalpi_in_verificare || 0}</p>
+                    <p>Procent montat: {formatPercent(judetDetails.summary.procent_montat)}</p>
 
-                      <div
-                        style={{
-                          border: '1px solid rgba(60,60,67,0.12)',
-                          borderRadius: '12px',
-                          padding: '10px 12px',
-                          background: 'rgba(255,255,255,0.72)',
-                        }}
-                      >
-                        <p><strong>Indicatori suport</strong></p>
-                        <p>În avizare: {s.puncte_in_avizare}</p>
-                        <p>Eliminate IGPR: {s.puncte_eliminate_igpr}</p>
-                        <p>Total T17: {s.total_t17}</p>
-                        <p>Total PV UAT: {s.total_pv_uat}</p>
-                        <p>Obiective: {s.nr_obiective || 0}</p>
-                        <p>UAT nesolicitate: {s.uat_nesolicitate || 0}</p>
-                      </div>
-                    </div>
+                    <hr />
 
-                    <div style={{ marginTop: '12px' }}>
-                      <p><strong>Decontare rute</strong></p>
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          gap: '8px',
-                          marginTop: '6px',
-                        }}
-                      >
-                        {s.situatie_decontare_rute ? (
-                          s.situatie_decontare_rute.split(' | ').map((linie, index) => (
-                            <span
-                              key={index}
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                padding: '7px 10px',
-                                borderRadius: '999px',
-                                background: '#f2f2f7',
-                                border: '1px solid rgba(60,60,67,0.12)',
-                                fontSize: '11px',
-                                fontWeight: 600,
-                              }}
-                            >
-                              {linie}
-                            </span>
-                          ))
-                        ) : (
-                          <span
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              padding: '7px 10px',
-                              borderRadius: '999px',
-                              background: '#f2f2f7',
-                              border: '1px solid rgba(60,60,67,0.12)',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                            }}
-                          >
-                            Fără date
-                          </span>
-                        )}
-                      </div>
-                    </div>
+                    <p>Puncte de început: {judetDetails.summary.puncte_de_inceput}</p>
+                    <p>Puncte în avizare: {judetDetails.summary.puncte_in_avizare}</p>
+                    <p>Total T17: {judetDetails.summary.total_t17}</p>
+                    <p>Total PV UAT: {judetDetails.summary.total_pv_uat}</p>
+                    <p>Procent în avizare: {judetDetails.summary.procent_in_avizare}%</p>
+                    <p>Procent eliminat IGPR: {judetDetails.summary.procent_eliminat_igpr}%</p>
+
+                    <hr />
+
+                    <p><strong>Avizare mare</strong></p>
+                    <p>DR_IGPR: {judetDetails.summary.dr_igpr_status || 'nesolicitat'}</p>
+                    <p>IPJ: {judetDetails.summary.ipj_status || 'nesolicitat'}</p>
+                    <p>IPJ_SIG_CIRC: {judetDetails.summary.ipj_sig_circ_status || 'nesolicitat'}</p>
+                    <p>CNAIR: {judetDetails.summary.cnair_status || 'nesolicitat'}</p>
+                    <p>CJ: {judetDetails.summary.cj_status || 'nesolicitat'}</p>
+                    <p>
+                      UAT cu aviz: {judetDetails.summary.uat_cu_aviz || 0} /{' '}
+                      {judetDetails.summary.uat_total || 0}
+                    </p>
+                    <p>UAT cu cerere: {judetDetails.summary.uat_cu_cerere || 0}</p>
+                    <p>UAT cu clarificări: {judetDetails.summary.uat_cu_clarificari || 0}</p>
+                    <p>UAT nesolicitate: {judetDetails.summary.uat_nesolicitate || 0}</p>
+
+                    <hr />
+
+                    <p><strong>Costuri standard</strong></p>
+                    <p>Cost materiale: {formatLei(judetDetails.summary.cost_materiale)}</p>
+                    <p>Cost manoperă: {formatLei(judetDetails.summary.cost_manopera)}</p>
+                    <p>Cost total: {formatLei(judetDetails.summary.cost_total)}</p>
+
+                    <hr />
+
+                    <p><strong>Venituri</strong></p>
+                    <p>Număr obiective: {judetDetails.summary.nr_obiective || 0}</p>
+                    <p>Venit total: {formatLei(judetDetails.summary.venit_total)}</p>
+                    <p>Diferență venit - cost: {formatLei(judetDetails.summary.diferenta_venit_cost)}</p>
+                    {judetDetails.summary.marja_estimativa !== null && (
+                      <p>Marjă estimativă stâlpi: {formatLei(judetDetails.summary.marja_estimativa)}</p>
+                    )}
+                    {judetDetails.summary.marja_la_zi !== null && (
+                      <p>Marjă la zi: {formatLei(judetDetails.summary.marja_la_zi)}</p>
+                    )}
+
+                    <hr />
+
+                    <p><strong>Decontare rute</strong></p>
+                    {judetDetails.summary.situatie_decontare_rute ? (
+                      judetDetails.summary.situatie_decontare_rute
+                        .split(' | ')
+                        .map((linie, index) => <p key={index}>{linie}</p>)
+                    ) : (
+                      <p>Fără date</p>
+                    )}
                   </div>
 
                   <div className="subsection">
@@ -419,7 +383,10 @@ export default function App() {
                   ))}
                 </select>
 
-                <select value={indicatorFilter} onChange={(e) => setIndicatorFilter(e.target.value)}>
+                <select
+                  value={indicatorFilter}
+                  onChange={(e) => setIndicatorFilter(e.target.value)}
+                >
                   <option value="">Toate tipurile</option>
                   {indicatorOptions.map((indicator) => (
                     <option key={indicator} value={indicator}>
