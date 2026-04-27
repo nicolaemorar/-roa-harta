@@ -3,6 +3,14 @@ import { GeoJSON, MapContainer, TileLayer, ZoomControl } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { feature as topojsonFeature } from 'topojson-client'
 
+const DEFAULT_TOOLTIP_SECTIONS = {
+  general: true,
+  montaj: true,
+  avizare: true,
+  costuri: true,
+  financiar: true,
+}
+
 function normalizeText(value) {
   return String(value || '')
     .normalize('NFD')
@@ -67,11 +75,14 @@ function getCountyStyle(judet, isSelected) {
   }
 }
 
-function buildTooltipHtml(judet) {
-  return `
-    <div class="county-tooltip county-tooltip-rich">
-      <div class="county-tooltip-title">${judet.nume_judet} (${judet.cod_judet})</div>
+function buildTooltipHtml(judet, tooltipSections) {
+  const htmlParts = [
+    `<div class="county-tooltip county-tooltip-rich">`,
+    `<div class="county-tooltip-title">${judet.nume_judet} (${judet.cod_judet})</div>`,
+  ]
 
+  if (tooltipSections.general) {
+    htmlParts.push(`
       <div class="county-tooltip-section-title">General</div>
       <div class="county-tooltip-grid">
         <div>Total puncte</div><div>${safeText(judet.total_puncte, '0')}</div>
@@ -82,7 +93,11 @@ function buildTooltipHtml(judet) {
         <div>T17</div><div>${safeText(judet.total_t17, '0')}</div>
         <div>PV UAT</div><div>${safeText(judet.total_pv_uat, '0')}</div>
       </div>
+    `)
+  }
 
+  if (tooltipSections.montaj) {
+    htmlParts.push(`
       <div class="county-tooltip-section-title">Montaj</div>
       <div class="county-tooltip-grid">
         <div>Stâlpi montați</div><div>${safeText(judet.stalpi_montati, '0')}</div>
@@ -90,7 +105,11 @@ function buildTooltipHtml(judet) {
         <div>În verificare</div><div>${safeText(judet.stalpi_in_verificare, '0')}</div>
         <div>% montat</div><div>${formatPercent(judet.procent_montat)}</div>
       </div>
+    `)
+  }
 
+  if (tooltipSections.avizare) {
+    htmlParts.push(`
       <div class="county-tooltip-section-title">Avizare</div>
       <div class="county-tooltip-grid">
         <div>DR_IGPR</div><div>${safeText(judet.dr_igpr_status, 'nesolicitat')}</div>
@@ -100,25 +119,46 @@ function buildTooltipHtml(judet) {
         <div>CJ</div><div>${safeText(judet.cj_status, 'nesolicitat')}</div>
         <div>UAT cu aviz</div><div>${safeText(judet.uat_cu_aviz, '0')} / ${safeText(judet.uat_total, '0')}</div>
       </div>
+    `)
+  }
 
+  if (tooltipSections.costuri) {
+    htmlParts.push(`
       <div class="county-tooltip-section-title">Costuri</div>
       <div class="county-tooltip-grid">
         <div>Materiale</div><div>${formatLei(judet.cost_materiale)}</div>
         <div>Manoperă</div><div>${formatLei(judet.cost_manopera)}</div>
         <div>Total</div><div>${formatLei(judet.cost_total)}</div>
       </div>
+    `)
+  }
 
+  if (tooltipSections.financiar) {
+    htmlParts.push(`
       <div class="county-tooltip-section-title">Financiar</div>
       <div class="county-tooltip-grid">
         <div>Venit total</div><div>${formatLei(judet.venit_total)}</div>
         <div>Dif. venit-cost</div><div>${formatLei(judet.diferenta_venit_cost)}</div>
       </div>
-    </div>
-  `
+    `)
+  }
+
+  htmlParts.push(`</div>`)
+
+  return htmlParts.join('')
 }
 
 export default function RomaniaMap({ judete, selectedJudet, onSelectJudet }) {
   const [geoData, setGeoData] = useState(null)
+  const [showTooltipSettings, setShowTooltipSettings] = useState(false)
+  const [tooltipSections, setTooltipSections] = useState(() => {
+    try {
+      const saved = localStorage.getItem('roa_tooltip_sections')
+      return saved ? JSON.parse(saved) : DEFAULT_TOOLTIP_SECTIONS
+    } catch (e) {
+      return DEFAULT_TOOLTIP_SECTIONS
+    }
+  })
 
   const judeteByName = useMemo(() => {
     const map = new Map()
@@ -143,6 +183,10 @@ export default function RomaniaMap({ judete, selectedJudet, onSelectJudet }) {
     loadGeo()
   }, [])
 
+  useEffect(() => {
+    localStorage.setItem('roa_tooltip_sections', JSON.stringify(tooltipSections))
+  }, [tooltipSections])
+
   const geoJsonWithData = useMemo(() => {
     if (!geoData?.features) return null
 
@@ -166,11 +210,18 @@ export default function RomaniaMap({ judete, selectedJudet, onSelectJudet }) {
     }
   }, [geoData, judeteByName])
 
+  function toggleTooltipSection(sectionKey) {
+    setTooltipSections((prev) => ({
+      ...prev,
+      [sectionKey]: !prev[sectionKey],
+    }))
+  }
+
   function onEachFeature(feature, layer) {
     const judet = feature.properties?.__judetData
     if (!judet) return
 
-    layer.bindTooltip(buildTooltipHtml(judet), {
+    layer.bindTooltip(buildTooltipHtml(judet, tooltipSections), {
       sticky: true,
       direction: 'auto',
       offset: [0, 10],
@@ -202,6 +253,65 @@ export default function RomaniaMap({ judete, selectedJudet, onSelectJudet }) {
 
   return (
     <div className="romania-map-shell">
+      <div className="tooltip-settings-wrapper">
+        <button
+          type="button"
+          className="tooltip-settings-button"
+          onClick={() => setShowTooltipSettings((prev) => !prev)}
+        >
+          Tooltip settings
+        </button>
+
+        {showTooltipSettings && (
+          <div className="tooltip-settings-panel">
+            <label>
+              <input
+                type="checkbox"
+                checked={tooltipSections.general}
+                onChange={() => toggleTooltipSection('general')}
+              />
+              GENERAL
+            </label>
+
+            <label>
+              <input
+                type="checkbox"
+                checked={tooltipSections.montaj}
+                onChange={() => toggleTooltipSection('montaj')}
+              />
+              MONTAJ
+            </label>
+
+            <label>
+              <input
+                type="checkbox"
+                checked={tooltipSections.avizare}
+                onChange={() => toggleTooltipSection('avizare')}
+              />
+              AVIZARE
+            </label>
+
+            <label>
+              <input
+                type="checkbox"
+                checked={tooltipSections.costuri}
+                onChange={() => toggleTooltipSection('costuri')}
+              />
+              COSTURI
+            </label>
+
+            <label>
+              <input
+                type="checkbox"
+                checked={tooltipSections.financiar}
+                onChange={() => toggleTooltipSection('financiar')}
+              />
+              FINANCIAR
+            </label>
+          </div>
+        )}
+      </div>
+
       <MapContainer
         center={[45.9432, 24.9668]}
         zoom={7}
@@ -219,7 +329,7 @@ export default function RomaniaMap({ judete, selectedJudet, onSelectJudet }) {
 
         {geoJsonWithData && (
           <GeoJSON
-            key={selectedJudet?.cod_judet || 'all'}
+            key={`${selectedJudet?.cod_judet || 'all'}-${JSON.stringify(tooltipSections)}`}
             data={geoJsonWithData}
             style={styleFeature}
             onEachFeature={onEachFeature}
