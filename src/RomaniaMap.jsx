@@ -76,7 +76,7 @@ function getCountyStyle(judet, isSelected, selectedRuta) {
       color: '#cbd5e1',
       weight: isSelected ? 2 : 1,
       fillColor: '#f8fafc',
-      fillOpacity: 0.18,
+      fillOpacity: 0.16,
       opacity: 0.45,
     }
   }
@@ -86,8 +86,8 @@ function getCountyStyle(judet, isSelected, selectedRuta) {
     return {
       color: isSelected ? '#1d4ed8' : isDone ? '#16a34a' : '#ca8a04',
       weight: isSelected ? 3.5 : 2.2,
-      fillColor: isDone ? '#bbf7d0' : '#fde68a',
-      fillOpacity: isSelected ? 0.92 : 0.84,
+      fillColor: isDone ? '#dcfce7' : '#fef3c7',
+      fillOpacity: isSelected ? 0.94 : 0.86,
       opacity: 1,
     }
   }
@@ -114,7 +114,7 @@ function buildTooltipHtml(judet, tooltipSections, selectedRuta) {
       <div class="county-tooltip-grid">
         <div>Rută</div><div>${selectedRuta}</div>
         <div>Județ în rută</div><div>${judetRute.includes(selectedRuta) ? 'DA' : 'NU'}</div>
-        <div>Montaj rută/județ</div><div>${formatPercent(judet.procent_montat)}</div>
+        <div>Montaj</div><div>${formatPercent(judet.procent_montat)}</div>
       </div>
     `)
   }
@@ -262,8 +262,17 @@ function createProgressIcon(procent) {
   return L.divIcon({
     className: 'route-progress-marker-shell',
     html: `<div class="${getProgressBadgeClass(procent)}">${formatPercent(procent)}</div>`,
-    iconSize: [64, 28],
-    iconAnchor: [32, 14],
+    iconSize: [56, 24],
+    iconAnchor: [28, 12],
+  })
+}
+
+function createCountyCodeIcon(code) {
+  return L.divIcon({
+    className: 'county-code-marker-shell',
+    html: `<div class="county-code-badge">${code}</div>`,
+    iconSize: [34, 18],
+    iconAnchor: [17, 9],
   })
 }
 
@@ -350,9 +359,35 @@ export default function RomaniaMap({
         if (!center) return null
 
         return {
-          key: `${judet.cod_judet}-${selectedRuta}`,
-          center,
+          key: `${judet.cod_judet}-${selectedRuta}-progress`,
+          center: [center[0] - 0.18, center[1]],
           procent: Number(judet.procent_montat || 0),
+        }
+      })
+      .filter(Boolean)
+  }, [geoJsonWithData, selectedRuta])
+
+  const countyCodeMarkers = useMemo(() => {
+    if (!geoJsonWithData?.features) return []
+
+    return geoJsonWithData.features
+      .map((feature) => {
+        const judet = feature.properties?.__judetData
+        if (!judet?.cod_judet) return null
+
+        const center = getFeatureCenter(feature)
+        if (!center) return null
+
+        const showCode = !selectedRuta || selectedRuta === 'TOATE'
+          ? true
+          : (Array.isArray(judet.rute) ? judet.rute : []).includes(selectedRuta)
+
+        if (!showCode) return null
+
+        return {
+          key: `${judet.cod_judet}-code`,
+          center,
+          code: judet.cod_judet,
         }
       })
       .filter(Boolean)
@@ -487,6 +522,15 @@ export default function RomaniaMap({
             onEachFeature={onEachFeature}
           />
         )}
+
+        {countyCodeMarkers.map((item) => (
+          <Marker
+            key={item.key}
+            position={item.center}
+            icon={createCountyCodeIcon(item.code)}
+            interactive={false}
+          />
+        ))}
 
         {progressMarkers.map((item) => (
           <Marker
