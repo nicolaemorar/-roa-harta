@@ -96,7 +96,17 @@ textarea {
 .map-panel-title-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.map-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .map-panel-header h2,
@@ -450,46 +460,6 @@ textarea {
   border-radius: 18px;
 }
 
-@media (max-width: 1100px) {
-  .main-two-columns {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 860px) {
-  .app-shell {
-    padding: 14px;
-  }
-
-  .app-header h1 {
-    font-size: 24px;
-  }
-
-  .romania-map-shell {
-    height: 480px;
-  }
-
-  .map-panel-header,
-  .bottom-panel-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .filters {
-    width: 100%;
-  }
-
-  .filters input,
-  .filters select {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .county-tooltip-rich {
-    min-width: 210px;
-    max-width: 260px;
-  }
-}
 .tooltip-settings-wrapper {
   position: relative;
   display: inline-block;
@@ -530,4 +500,132 @@ textarea {
   font-size: 13px;
   font-weight: 600;
   color: #111827;
+}
+
+.route-filter-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.route-filter-label {
+  font-size: 14px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.route-filter-select {
+  border: 1px solid #d1d5db;
+  background: rgba(255, 255, 255, 0.92);
+  color: #111827;
+  border-radius: 12px;
+  height: 38px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 700;
+  min-width: 190px;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+.route-filter-select:focus {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.08);
+}
+
+.route-summary-card {
+  margin-bottom: 14px;
+  max-width: 320px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #e5e7eb;
+  border-radius: 18px;
+  padding: 14px 16px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+.route-summary-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: #111827;
+  margin-bottom: 10px;
+}
+
+.route-summary-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: #374151;
+  margin-bottom: 6px;
+}
+
+.route-summary-line:last-child {
+  margin-bottom: 0;
+}
+
+.route-summary-line strong {
+  color: #111827;
+}
+
+@media (max-width: 1100px) {
+  .main-two-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 860px) {
+  .app-shell {
+    padding: 14px;
+  }
+
+  .app-header h1 {
+    font-size: 24px;
+  }
+
+  .romania-map-shell {
+    height: 480px;
+  }
+
+  .map-panel-header,
+  .bottom-panel-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .map-panel-title-row {
+    align-items: flex-start;
+  }
+
+  .map-panel-actions {
+    width: 100%;
+  }
+
+  .filters {
+    width: 100%;
+  }
+
+  .filters input,
+  .filters select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .route-filter-wrapper {
+    width: 100%;
+  }
+
+  .route-filter-select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .county-tooltip-rich {
+    min-width: 210px;
+    max-width: 260px;
+  }
+
+  .route-summary-card {
+    max-width: 100%;
+  }
 }

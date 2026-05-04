@@ -59,12 +59,36 @@ function safeText(value, fallback = '-') {
   return String(value)
 }
 
-function getCountyStyle(judet, isSelected) {
+function getCountyStyle(judet, isSelected, selectedRuta) {
   const procent = Number(judet?.procent_montat || 0)
+  const judetRute = Array.isArray(judet?.rute) ? judet.rute : []
+
+  const isRutaFiltered = selectedRuta && selectedRuta !== 'TOATE'
+  const isInRuta = !isRutaFiltered || judetRute.includes(selectedRuta)
 
   let fillColor = '#f3f4f6'
   if (procent >= 100) fillColor = '#dcfce7'
   else if (procent > 0) fillColor = '#dbeafe'
+
+  if (isRutaFiltered && !isInRuta) {
+    return {
+      color: '#cbd5e1',
+      weight: isSelected ? 2 : 1,
+      fillColor: '#f8fafc',
+      fillOpacity: 0.28,
+      opacity: 0.55,
+    }
+  }
+
+  if (isRutaFiltered && isInRuta) {
+    return {
+      color: isSelected ? '#1d4ed8' : '#2563eb',
+      weight: isSelected ? 3.5 : 2.2,
+      fillColor: '#bfdbfe',
+      fillOpacity: isSelected ? 0.92 : 0.84,
+      opacity: 1,
+    }
+  }
 
   return {
     color: isSelected ? '#2563eb' : '#94a3b8',
@@ -75,11 +99,22 @@ function getCountyStyle(judet, isSelected) {
   }
 }
 
-function buildTooltipHtml(judet, tooltipSections) {
+function buildTooltipHtml(judet, tooltipSections, selectedRuta) {
+  const judetRute = Array.isArray(judet?.rute) ? judet.rute : []
   const htmlParts = [
     `<div class="county-tooltip county-tooltip-rich">`,
     `<div class="county-tooltip-title">${judet.nume_judet} (${judet.cod_judet})</div>`,
   ]
+
+  if (selectedRuta && selectedRuta !== 'TOATE') {
+    htmlParts.push(`
+      <div class="county-tooltip-section-title">Rută selectată</div>
+      <div class="county-tooltip-grid">
+        <div>Rută</div><div>${selectedRuta}</div>
+        <div>Județ în rută</div><div>${judetRute.includes(selectedRuta) ? 'DA' : 'NU'}</div>
+      </div>
+    `)
+  }
 
   if (tooltipSections.general) {
     htmlParts.push(`
@@ -92,6 +127,7 @@ function buildTooltipHtml(judet, tooltipSections) {
         <div>Eligibile montaj</div><div>${safeText(judet.puncte_eligibile_montaj, '0')}</div>
         <div>T17</div><div>${safeText(judet.total_t17, '0')}</div>
         <div>PV UAT</div><div>${safeText(judet.total_pv_uat, '0')}</div>
+        <div>Rute</div><div>${judetRute.length ? judetRute.join(', ') : '-'}</div>
       </div>
     `)
   }
@@ -148,7 +184,12 @@ function buildTooltipHtml(judet, tooltipSections) {
   return htmlParts.join('')
 }
 
-export default function RomaniaMap({ judete, selectedJudet, onSelectJudet }) {
+export default function RomaniaMap({
+  judete,
+  selectedJudet,
+  onSelectJudet,
+  selectedRuta,
+}) {
   const [geoData, setGeoData] = useState(null)
   const [showTooltipSettings, setShowTooltipSettings] = useState(false)
   const [tooltipSections, setTooltipSections] = useState(() => {
@@ -221,7 +262,7 @@ export default function RomaniaMap({ judete, selectedJudet, onSelectJudet }) {
     const judet = feature.properties?.__judetData
     if (!judet) return
 
-    layer.bindTooltip(buildTooltipHtml(judet, tooltipSections), {
+    layer.bindTooltip(buildTooltipHtml(judet, tooltipSections, selectedRuta), {
       sticky: true,
       direction: 'auto',
       offset: [0, 10],
@@ -240,7 +281,7 @@ export default function RomaniaMap({ judete, selectedJudet, onSelectJudet }) {
       },
       mouseout: (e) => {
         const isSelected = selectedJudet?.cod_judet === judet.cod_judet
-        e.target.setStyle(getCountyStyle(judet, isSelected))
+        e.target.setStyle(getCountyStyle(judet, isSelected, selectedRuta))
       },
     })
   }
@@ -248,7 +289,7 @@ export default function RomaniaMap({ judete, selectedJudet, onSelectJudet }) {
   function styleFeature(feature) {
     const judet = feature.properties?.__judetData
     const isSelected = selectedJudet?.cod_judet === judet?.cod_judet
-    return getCountyStyle(judet, isSelected)
+    return getCountyStyle(judet, isSelected, selectedRuta)
   }
 
   return (
@@ -329,7 +370,7 @@ export default function RomaniaMap({ judete, selectedJudet, onSelectJudet }) {
 
         {geoJsonWithData && (
           <GeoJSON
-            key={`${selectedJudet?.cod_judet || 'all'}-${JSON.stringify(tooltipSections)}`}
+            key={`${selectedJudet?.cod_judet || 'all'}-${selectedRuta || 'TOATE'}-${JSON.stringify(tooltipSections)}`}
             data={geoJsonWithData}
             style={styleFeature}
             onEachFeature={onEachFeature}

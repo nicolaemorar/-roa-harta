@@ -34,6 +34,9 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState('')
   const [searchFilter, setSearchFilter] = useState('')
 
+  const [ruteSummary, setRuteSummary] = useState([])
+  const [selectedRuta, setSelectedRuta] = useState('TOATE')
+
   const mapPanelRef = useRef(null)
 
   async function handleToggleFullscreen() {
@@ -91,6 +94,11 @@ export default function App() {
               montaj.stalpi_ramasi || judet.puncte_ramase_montaj || 0,
             marja_estimativa: montaj.marja_estimativa ?? null,
             marja_la_zi: montaj.marja_la_zi ?? null,
+            rute: Array.isArray(judet.rute)
+              ? judet.rute
+              : typeof judet.rute === 'string'
+                ? judet.rute.split('|').map((x) => x.trim()).filter(Boolean)
+                : [],
           }
         })
 
@@ -107,6 +115,36 @@ export default function App() {
     }
 
     loadJudete()
+  }, [])
+
+  useEffect(() => {
+    async function loadRuteSummary() {
+      try {
+        const response = await fetch(`${API_BASE}/api/rute/summary`)
+        if (!response.ok) {
+          throw new Error('Nu am putut încărca sumarul rutelor')
+        }
+
+        const data = await response.json()
+        const normalized = Array.isArray(data)
+          ? data.map((ruta) => ({
+              ...ruta,
+              judete: Array.isArray(ruta.judete)
+                ? ruta.judete
+                : typeof ruta.judete === 'string'
+                  ? ruta.judete.split('|').map((x) => x.trim()).filter(Boolean)
+                  : [],
+            }))
+          : []
+
+        setRuteSummary(normalized)
+      } catch (error) {
+        console.error('Nu am putut încărca sumarul rutelor:', error)
+        setRuteSummary([])
+      }
+    }
+
+    loadRuteSummary()
   }, [])
 
   async function handleSelectJudet(judet, montajSummaryDataFromLoad = null) {
@@ -186,6 +224,21 @@ export default function App() {
     return [...new Set(judetPuncte.map((p) => p.status_operational).filter(Boolean))].sort()
   }, [judetPuncte])
 
+  const rutaOptions = useMemo(() => {
+    return [
+      { cod_ruta: 'TOATE', nume_ruta: 'Toate rutele' },
+      ...ruteSummary.map((ruta) => ({
+        cod_ruta: ruta.cod_ruta,
+        nume_ruta: `${ruta.cod_ruta} - ${ruta.nume_ruta}`,
+      })),
+    ]
+  }, [ruteSummary])
+
+  const selectedRutaData = useMemo(() => {
+    if (selectedRuta === 'TOATE') return null
+    return ruteSummary.find((ruta) => ruta.cod_ruta === selectedRuta) || null
+  }, [ruteSummary, selectedRuta])
+
   const filteredPuncte = useMemo(() => {
     return judetPuncte.filter((punct) => {
       const routeOk = !routeFilter || punct.cod_ruta === routeFilter
@@ -215,9 +268,27 @@ export default function App() {
             <div className="map-panel-header">
               <div className="map-panel-title-row">
                 <h2>Hartă județe</h2>
-                <button type="button" className="fullscreen-btn" onClick={handleToggleFullscreen}>
-                  Full screen
-                </button>
+
+                <div className="map-panel-actions">
+                  <button type="button" className="fullscreen-btn" onClick={handleToggleFullscreen}>
+                    Full screen
+                  </button>
+
+                  <div className="route-filter-wrapper">
+                    <label className="route-filter-label">Filtru rută</label>
+                    <select
+                      className="route-filter-select"
+                      value={selectedRuta}
+                      onChange={(e) => setSelectedRuta(e.target.value)}
+                    >
+                      {rutaOptions.map((ruta) => (
+                        <option key={ruta.cod_ruta} value={ruta.cod_ruta}>
+                          {ruta.nume_ruta}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
               </div>
 
               <div className="map-legend">
@@ -227,10 +298,35 @@ export default function App() {
               </div>
             </div>
 
+            {selectedRutaData && (
+              <div className="route-summary-card">
+                <div className="route-summary-title">
+                  {selectedRutaData.cod_ruta} – {selectedRutaData.nume_ruta}
+                </div>
+                <div className="route-summary-line">
+                  <span>Valoare</span>
+                  <strong>{formatLei(selectedRutaData.valoare_ruta)}</strong>
+                </div>
+                <div className="route-summary-line">
+                  <span>Județe</span>
+                  <strong>{selectedRutaData.judete_total || 0}</strong>
+                </div>
+                <div className="route-summary-line">
+                  <span>Finalizate</span>
+                  <strong>{selectedRutaData.judete_finalizate || 0}</strong>
+                </div>
+                <div className="route-summary-line">
+                  <span>În lucru</span>
+                  <strong>{selectedRutaData.judete_in_lucru || 0}</strong>
+                </div>
+              </div>
+            )}
+
             <RomaniaMap
               judete={judete}
               selectedJudet={selectedJudet}
               onSelectJudet={handleSelectJudet}
+              selectedRuta={selectedRuta}
             />
           </section>
 
