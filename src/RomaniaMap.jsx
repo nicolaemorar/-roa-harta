@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { GeoJSON, MapContainer, TileLayer, ZoomControl } from 'react-leaflet'
+import L from 'leaflet'
+import { GeoJSON, MapContainer, Marker, TileLayer, ZoomControl } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { feature as topojsonFeature } from 'topojson-client'
 
@@ -41,16 +42,16 @@ function getGeoJsonFromAny(input) {
 
 function formatLei(value) {
   const num = Number(value || 0)
-  return num.toLocaleString('ro-RO', {
+  return `${num.toLocaleString('ro-RO', {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
-  }) + ' lei'
+  })} lei`
 }
 
 function formatPercent(value) {
   return Number(value || 0).toLocaleString('ro-RO', {
     minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
+    maximumFractionDigits: 0,
   }) + '%'
 }
 
@@ -75,16 +76,17 @@ function getCountyStyle(judet, isSelected, selectedRuta) {
       color: '#cbd5e1',
       weight: isSelected ? 2 : 1,
       fillColor: '#f8fafc',
-      fillOpacity: 0.28,
-      opacity: 0.55,
+      fillOpacity: 0.18,
+      opacity: 0.45,
     }
   }
 
   if (isRutaFiltered && isInRuta) {
+    const isDone = procent >= 100
     return {
-      color: isSelected ? '#1d4ed8' : '#2563eb',
+      color: isSelected ? '#1d4ed8' : isDone ? '#16a34a' : '#ca8a04',
       weight: isSelected ? 3.5 : 2.2,
-      fillColor: '#bfdbfe',
+      fillColor: isDone ? '#bbf7d0' : '#fde68a',
       fillOpacity: isSelected ? 0.92 : 0.84,
       opacity: 1,
     }
@@ -112,6 +114,7 @@ function buildTooltipHtml(judet, tooltipSections, selectedRuta) {
       <div class="county-tooltip-grid">
         <div>Rută</div><div>${selectedRuta}</div>
         <div>Județ în rută</div><div>${judetRute.includes(selectedRuta) ? 'DA' : 'NU'}</div>
+        <div>Montaj rută/județ</div><div>${formatPercent(judet.procent_montat)}</div>
       </div>
     `)
   }
@@ -179,9 +182,89 @@ function buildTooltipHtml(judet, tooltipSections, selectedRuta) {
     `)
   }
 
+  if (judet.google_earth_url) {
+    htmlParts.push(`
+      <div class="county-tooltip-section-title">Google Earth</div>
+      <div class="county-tooltip-grid">
+        <div>Hartă puncte</div>
+        <div>
+          <a
+            href="${judet.google_earth_url}"
+            target="_blank"
+            rel="noreferrer"
+            class="google-earth-link-btn"
+          >
+            Deschide
+          </a>
+        </div>
+      </div>
+    `)
+  }
+
   htmlParts.push(`</div>`)
 
   return htmlParts.join('')
+}
+
+function collectLatLngs(coords, acc = []) {
+  if (!Array.isArray(coords)) return acc
+
+  if (
+    coords.length >= 2 &&
+    typeof coords[0] === 'number' &&
+    typeof coords[1] === 'number'
+  ) {
+    acc.push([coords[1], coords[0]])
+    return acc
+  }
+
+  coords.forEach((item) => collectLatLngs(item, acc))
+  return acc
+}
+
+function getFeatureCenter(feature) {
+  const geometry = feature?.geometry
+  if (!geometry?.coordinates) return null
+
+  const points = collectLatLngs(geometry.coordinates, [])
+  if (!points.length) return null
+
+  let minLat = points[0][0]
+  let maxLat = points[0][0]
+  let minLng = points[0][1]
+  let maxLng = points[0][1]
+
+  points.forEach(([lat, lng]) => {
+    if (lat < minLat) minLat = lat
+    if (lat > maxLat) maxLat = lat
+    if (lng < minLng) minLng = lng
+    if (lng > maxLng) maxLng = lng
+  })
+
+  return [(minLat + maxLat) / 2, (minLng + maxLng) / 2]
+}
+
+function getProgressBadgeClass(procent) {
+  const value = Number(procent || 0)
+
+  if (value >= 100) {
+    return 'route-progress-badge route-progress-badge-done'
+  }
+
+  if (value > 95) {
+    return 'route-progress-badge route-progress-badge-work route-progress-badge-near-done'
+  }
+
+  return 'route-progress-badge route-progress-badge-work'
+}
+
+function createProgressIcon(procent) {
+  return L.divIcon({
+    className: 'route-progress-marker-shell',
+    html: `<div class="${getProgressBadgeClass(procent)}">${formatPercent(procent)}</div>`,
+    iconSize: [64, 28],
+    iconAnchor: [32, 14],
+  })
 }
 
 export default function RomaniaMap({
@@ -196,7 +279,7 @@ export default function RomaniaMap({
     try {
       const saved = localStorage.getItem('roa_tooltip_sections')
       return saved ? JSON.parse(saved) : DEFAULT_TOOLTIP_SECTIONS
-    } catch (e) {
+    } catch {
       return DEFAULT_TOOLTIP_SECTIONS
     }
   })
@@ -251,6 +334,30 @@ export default function RomaniaMap({
     }
   }, [geoData, judeteByName])
 
+  const progressMarkers = useMemo(() => {
+    if (!geoJsonWithData?.features) return []
+    if (!selectedRuta || selectedRuta === 'TOATE') return []
+
+    return geoJsonWithData.features
+      .map((feature) => {
+        const judet = feature.properties?.__judetData
+        if (!judet) return null
+
+        const judetRute = Array.isArray(judet.rute) ? judet.rute : []
+        if (!judetRute.includes(selectedRuta)) return null
+
+        const center = getFeatureCenter(feature)
+        if (!center) return null
+
+        return {
+          key: `${judet.cod_judet}-${selectedRuta}`,
+          center,
+          procent: Number(judet.procent_montat || 0),
+        }
+      })
+      .filter(Boolean)
+  }, [geoJsonWithData, selectedRuta])
+
   function toggleTooltipSection(sectionKey) {
     setTooltipSections((prev) => ({
       ...prev,
@@ -262,16 +369,20 @@ export default function RomaniaMap({
     const judet = feature.properties?.__judetData
     if (!judet) return
 
-    layer.bindTooltip(buildTooltipHtml(judet, tooltipSections, selectedRuta), {
-      sticky: true,
-      direction: 'auto',
+    layer.bindPopup(buildTooltipHtml(judet, tooltipSections, selectedRuta), {
+      autoClose: true,
+      closeButton: true,
+      className: 'county-popup-wrapper',
+      maxWidth: 340,
+      minWidth: 260,
       offset: [0, 10],
-      opacity: 1,
-      className: 'county-tooltip-wrapper',
     })
 
     layer.on({
-      click: () => onSelectJudet?.(judet),
+      click: () => {
+        onSelectJudet?.(judet)
+        layer.openPopup()
+      },
       mouseover: (e) => {
         e.target.setStyle({
           weight: 3,
@@ -376,6 +487,15 @@ export default function RomaniaMap({
             onEachFeature={onEachFeature}
           />
         )}
+
+        {progressMarkers.map((item) => (
+          <Marker
+            key={item.key}
+            position={item.center}
+            icon={createProgressIcon(item.procent)}
+            interactive={false}
+          />
+        ))}
       </MapContainer>
     </div>
   )
