@@ -29,13 +29,13 @@ export default function App() {
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [error, setError] = useState('')
 
+  const [routeSummaries, setRouteSummaries] = useState([])
+  const [selectedRuta, setSelectedRuta] = useState('TOATE')
+
   const [routeFilter, setRouteFilter] = useState('')
   const [indicatorFilter, setIndicatorFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [searchFilter, setSearchFilter] = useState('')
-
-  const [ruteSummary, setRuteSummary] = useState([])
-  const [selectedRuta, setSelectedRuta] = useState('TOATE')
 
   const mapPanelRef = useRef(null)
 
@@ -60,9 +60,10 @@ export default function App() {
         setLoading(true)
         setError('')
 
-        const [dashboardResponse, montajResponse] = await Promise.all([
+        const [dashboardResponse, montajResponse, routeSummaryResponse] = await Promise.all([
           fetch(`${API_BASE}/api/harta/judete`),
           fetch(`${API_BASE}/api/montaj/judete-summary`),
+          fetch(`${API_BASE}/api/rute/summary`),
         ])
 
         if (!dashboardResponse.ok) {
@@ -73,8 +74,15 @@ export default function App() {
           throw new Error('Nu am putut încărca progresul de montaj')
         }
 
+        if (!routeSummaryResponse.ok) {
+          throw new Error('Nu am putut încărca sumarul rutelor')
+        }
+
         const dashboardData = await dashboardResponse.json()
         const montajData = await montajResponse.json()
+        const routeSummaryData = await routeSummaryResponse.json()
+
+        setRouteSummaries(routeSummaryData)
 
         const montajMap = new Map(montajData.map((item) => [item.cod_judet, item]))
 
@@ -94,11 +102,6 @@ export default function App() {
               montaj.stalpi_ramasi || judet.puncte_ramase_montaj || 0,
             marja_estimativa: montaj.marja_estimativa ?? null,
             marja_la_zi: montaj.marja_la_zi ?? null,
-            rute: Array.isArray(judet.rute)
-              ? judet.rute
-              : typeof judet.rute === 'string'
-                ? judet.rute.split('|').map((x) => x.trim()).filter(Boolean)
-                : [],
           }
         })
 
@@ -115,36 +118,6 @@ export default function App() {
     }
 
     loadJudete()
-  }, [])
-
-  useEffect(() => {
-    async function loadRuteSummary() {
-      try {
-        const response = await fetch(`${API_BASE}/api/rute/summary`)
-        if (!response.ok) {
-          throw new Error('Nu am putut încărca sumarul rutelor')
-        }
-
-        const data = await response.json()
-        const normalized = Array.isArray(data)
-          ? data.map((ruta) => ({
-              ...ruta,
-              judete: Array.isArray(ruta.judete)
-                ? ruta.judete
-                : typeof ruta.judete === 'string'
-                  ? ruta.judete.split('|').map((x) => x.trim()).filter(Boolean)
-                  : [],
-            }))
-          : []
-
-        setRuteSummary(normalized)
-      } catch (error) {
-        console.error('Nu am putut încărca sumarul rutelor:', error)
-        setRuteSummary([])
-      }
-    }
-
-    loadRuteSummary()
   }, [])
 
   async function handleSelectJudet(judet, montajSummaryDataFromLoad = null) {
@@ -213,6 +186,15 @@ export default function App() {
   }
 
   const routeOptions = useMemo(() => {
+    return ['TOATE', ...routeSummaries.map((route) => route.cod_ruta)]
+  }, [routeSummaries])
+
+  const selectedRouteSummary = useMemo(() => {
+    if (!selectedRuta || selectedRuta === 'TOATE') return null
+    return routeSummaries.find((route) => route.cod_ruta === selectedRuta) || null
+  }, [routeSummaries, selectedRuta])
+
+  const routeOptionsForTable = useMemo(() => {
     return [...new Set(judetPuncte.map((p) => p.cod_ruta).filter(Boolean))].sort()
   }, [judetPuncte])
 
@@ -224,23 +206,10 @@ export default function App() {
     return [...new Set(judetPuncte.map((p) => p.status_operational).filter(Boolean))].sort()
   }, [judetPuncte])
 
-  const rutaOptions = useMemo(() => {
-    return [
-      { cod_ruta: 'TOATE', nume_ruta: 'Toate rutele' },
-      ...ruteSummary.map((ruta) => ({
-        cod_ruta: ruta.cod_ruta,
-        nume_ruta: `${ruta.cod_ruta} - ${ruta.nume_ruta}`,
-      })),
-    ]
-  }, [ruteSummary])
-
-  const selectedRutaData = useMemo(() => {
-    if (selectedRuta === 'TOATE') return null
-    return ruteSummary.find((ruta) => ruta.cod_ruta === selectedRuta) || null
-  }, [ruteSummary, selectedRuta])
-
   const filteredPuncte = useMemo(() => {
     return judetPuncte.filter((punct) => {
+      const selectedRutaOk =
+        !selectedRuta || selectedRuta === 'TOATE' || punct.cod_ruta === selectedRuta
       const routeOk = !routeFilter || punct.cod_ruta === routeFilter
       const indicatorOk = !indicatorFilter || punct.tip_indicator === indicatorFilter
       const statusOk = !statusFilter || punct.status_operational === statusFilter
@@ -248,9 +217,9 @@ export default function App() {
         !searchFilter ||
         punct.cod_punct?.toLowerCase().includes(searchFilter.toLowerCase())
 
-      return routeOk && indicatorOk && statusOk && searchOk
+      return selectedRutaOk && routeOk && indicatorOk && statusOk && searchOk
     })
-  }, [judetPuncte, routeFilter, indicatorFilter, statusFilter, searchFilter])
+  }, [judetPuncte, selectedRuta, routeFilter, indicatorFilter, statusFilter, searchFilter])
 
   return (
     <div className="app-shell">
@@ -270,24 +239,28 @@ export default function App() {
                 <h2>Hartă județe</h2>
 
                 <div className="map-panel-actions">
-                  <button type="button" className="fullscreen-btn" onClick={handleToggleFullscreen}>
-                    Full screen
-                  </button>
-
                   <div className="route-filter-wrapper">
-                    <label className="route-filter-label">Filtru rută</label>
+                    <span className="route-filter-label">Rută:</span>
                     <select
                       className="route-filter-select"
                       value={selectedRuta}
                       onChange={(e) => setSelectedRuta(e.target.value)}
                     >
-                      {rutaOptions.map((ruta) => (
-                        <option key={ruta.cod_ruta} value={ruta.cod_ruta}>
-                          {ruta.nume_ruta}
+                      {routeOptions.map((routeCode) => (
+                        <option key={routeCode} value={routeCode}>
+                          {routeCode === 'TOATE' ? 'Toate rutele' : routeCode}
                         </option>
                       ))}
                     </select>
                   </div>
+
+                  <button
+                    type="button"
+                    className="fullscreen-btn"
+                    onClick={handleToggleFullscreen}
+                  >
+                    Full screen
+                  </button>
                 </div>
               </div>
 
@@ -298,26 +271,45 @@ export default function App() {
               </div>
             </div>
 
-            {selectedRutaData && (
+            {selectedRouteSummary && (
               <div className="route-summary-card">
                 <div className="route-summary-title">
-                  {selectedRutaData.cod_ruta} – {selectedRutaData.nume_ruta}
+                  {selectedRouteSummary.cod_ruta} - {selectedRouteSummary.nume_ruta}
                 </div>
+
                 <div className="route-summary-line">
-                  <span>Valoare</span>
-                  <strong>{formatLei(selectedRutaData.valoare_ruta)}</strong>
+                  <span>Valoare rută</span>
+                  <strong>{formatLei(selectedRouteSummary.valoare_ruta)}</strong>
                 </div>
+
+                <div className="route-summary-line">
+                  <span>Cheltuială rută</span>
+                  <strong>{formatLei(selectedRouteSummary.cheltuiala_ruta)}</strong>
+                </div>
+
+                <div className="route-summary-line">
+                  <span>Cheltuială totală județe din rută</span>
+                  <strong>{formatLei(selectedRouteSummary.cheltuiala_totala_judete_din_ruta)}</strong>
+                </div>
+
+                <div className="route-summary-line">
+                  <span>Obiective rută</span>
+                  <strong>{selectedRouteSummary.nr_obiective_ruta || 0}</strong>
+                </div>
+
                 <div className="route-summary-line">
                   <span>Județe</span>
-                  <strong>{selectedRutaData.judete_total || 0}</strong>
+                  <strong>{selectedRouteSummary.judete_total || 0}</strong>
                 </div>
+
                 <div className="route-summary-line">
                   <span>Finalizate</span>
-                  <strong>{selectedRutaData.judete_finalizate || 0}</strong>
+                  <strong>{selectedRouteSummary.judete_finalizate || 0}</strong>
                 </div>
+
                 <div className="route-summary-line">
                   <span>În lucru</span>
-                  <strong>{selectedRutaData.judete_in_lucru || 0}</strong>
+                  <strong>{selectedRouteSummary.judete_in_lucru || 0}</strong>
                 </div>
               </div>
             )}
@@ -471,8 +463,8 @@ export default function App() {
                 />
 
                 <select value={routeFilter} onChange={(e) => setRouteFilter(e.target.value)}>
-                  <option value="">Toate rutele</option>
-                  {routeOptions.map((route) => (
+                  <option value="">Toate rutele din județ</option>
+                  {routeOptionsForTable.map((route) => (
                     <option key={route} value={route}>
                       {route}
                     </option>
