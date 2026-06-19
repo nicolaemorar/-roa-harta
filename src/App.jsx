@@ -243,6 +243,32 @@ export default function App() {
     return routeSummaries.find((route) => route.cod_ruta === selectedRuta) || null
   }, [routeSummaries, selectedRuta])
 
+  const totalMontajSummary = useMemo(() => {
+    const source =
+      selectedRuta && selectedRuta !== 'TOATE'
+        ? judete.filter((j) => Array.isArray(j.rute) && j.rute.includes(selectedRuta))
+        : judete
+
+    const totalEligibili = source.reduce(
+      (sum, j) => sum + Number(j.stalpi_eligibili || 0),
+      0
+    )
+
+    const totalMontati = source.reduce(
+      (sum, j) => sum + Number(j.stalpi_montati || 0),
+      0
+    )
+
+    const procentTotal =
+      totalEligibili > 0 ? (totalMontati / totalEligibili) * 100 : 0
+
+    return {
+      totalEligibili,
+      totalMontati,
+      procentTotal,
+    }
+  }, [judete, selectedRuta])
+
   const routeOptionsForTable = useMemo(() => {
     return [...new Set(judetPuncte.map((p) => p.cod_ruta).filter(Boolean))].sort()
   }, [judetPuncte])
@@ -315,7 +341,9 @@ export default function App() {
 
               <div className="map-legend">
                 <span className="legend-pill legend-start">0% montat</span>
-                <span className="legend-pill legend-progress">progres montaj</span>
+                <span className="legend-pill legend-progress">
+                  {formatPercent(totalMontajSummary.procentTotal)} · {totalMontajSummary.totalMontati}/{totalMontajSummary.totalEligibili}
+                </span>
                 <span className="legend-pill legend-mounted">100% montat</span>
               </div>
             </div>
@@ -581,4 +609,3 @@ export default function App() {
     </div>
   )
 }
-
