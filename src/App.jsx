@@ -20,6 +20,35 @@ function formatPercent(value) {
   })}%`
 }
 
+function normalizeMontajItem(item) {
+  return {
+    ...item,
+    stalpi_eligibili: Number(item?.stalpi_eligibili ?? 0),
+    stalpi_montati: Number(item?.stalpi_montati ?? 0),
+    stalpi_ramasi: Number(item?.stalpi_ramasi ?? 0),
+    stalpi_in_verificare: Number(item?.stalpi_in_verificare ?? 0),
+    procent_montat: Number(item?.procent_montat ?? 0),
+    venit_total: Number(item?.venit_total ?? 0),
+    marja_estimativa:
+      item?.marja_estimativa != null ? Number(item.marja_estimativa) : null,
+    marja_la_zi:
+      item?.marja_la_zi != null ? Number(item.marja_la_zi) : null,
+  }
+}
+
+function normalizeRouteSummaryItem(item) {
+  return {
+    ...item,
+    valoare_ruta: Number(item?.valoare_ruta ?? 0),
+    cheltuiala_ruta: Number(item?.cheltuiala_ruta ?? 0),
+    cheltuiala_totala_judete_din_ruta: Number(item?.cheltuiala_totala_judete_din_ruta ?? 0),
+    nr_obiective_ruta: Number(item?.nr_obiective_ruta ?? 0),
+    judete_total: Number(item?.judete_total ?? 0),
+    judete_finalizate: Number(item?.judete_finalizate ?? 0),
+    judete_in_lucru: Number(item?.judete_in_lucru ?? 0),
+  }
+}
+
 export default function App() {
   const [judete, setJudete] = useState([])
   const [selectedJudet, setSelectedJudet] = useState(null)
@@ -79,29 +108,38 @@ export default function App() {
         }
 
         const dashboardData = await dashboardResponse.json()
-        const montajData = await montajResponse.json()
-        const routeSummaryData = await routeSummaryResponse.json()
+        const rawMontajData = await montajResponse.json()
+        const rawRouteSummaryData = await routeSummaryResponse.json()
 
-        setRouteSummaries(routeSummaryData)
+        const montajData = rawMontajData.map(normalizeMontajItem)
+        const normalizedRouteSummaries = rawRouteSummaryData.map(normalizeRouteSummaryItem)
+
+        setRouteSummaries(normalizedRouteSummaries)
 
         const montajMap = new Map(montajData.map((item) => [item.cod_judet, item]))
 
         const merged = dashboardData.map((judet) => {
-          const montaj = montajMap.get(judet.cod_judet) || {}
+          const montaj = montajMap.get(judet.cod_judet) ?? {}
+
+          const stalpiEligibili = Number(montaj.stalpi_eligibili ?? 0)
+          const stalpiMontati = Number(montaj.stalpi_montati ?? 0)
+          const stalpiRamasi = Number(montaj.stalpi_ramasi ?? 0)
+          const stalpiInVerificare = Number(montaj.stalpi_in_verificare ?? 0)
+          const procentMontat = Number(montaj.procent_montat ?? 0)
 
           return {
             ...judet,
-            stalpi_eligibili: montaj.stalpi_eligibili || 0,
-            stalpi_montati: montaj.stalpi_montati || 0,
-            stalpi_ramasi: montaj.stalpi_ramasi || 0,
-            stalpi_in_verificare: montaj.stalpi_in_verificare || 0,
-            procent_montat: Number(montaj.procent_montat || 0),
-            puncte_montate_actual:
-              montaj.stalpi_montati || judet.puncte_montate || 0,
-            puncte_ramase_actual:
-              montaj.stalpi_ramasi || judet.puncte_ramase_montaj || 0,
-            marja_estimativa: montaj.marja_estimativa ?? null,
-            marja_la_zi: montaj.marja_la_zi ?? null,
+            stalpi_eligibili: stalpiEligibili,
+            stalpi_montati: stalpiMontati,
+            stalpi_ramasi: stalpiRamasi,
+            stalpi_in_verificare: stalpiInVerificare,
+            procent_montat: procentMontat,
+            puncte_montate_actual: stalpiMontati,
+            puncte_ramase_actual: stalpiRamasi,
+            marja_estimativa:
+              montaj.marja_estimativa != null ? Number(montaj.marja_estimativa) : null,
+            marja_la_zi:
+              montaj.marja_la_zi != null ? Number(montaj.marja_la_zi) : null,
           }
         })
 
@@ -152,24 +190,35 @@ export default function App() {
 
       const detailsData = await detailsResponse.json()
       const puncteData = await puncteResponse.json()
-      const montajSummaryData = await montajSummaryResponse.json()
+      const rawMontajSummaryData = await montajSummaryResponse.json()
+      const montajSummaryData = rawMontajSummaryData.map(normalizeMontajItem)
 
       const montajSummary =
-        montajSummaryData.find((x) => x.cod_judet === judet.cod_judet) || {}
+        montajSummaryData.find((x) => x.cod_judet === judet.cod_judet) ?? {}
+
+      const stalpiEligibili = Number(montajSummary.stalpi_eligibili ?? 0)
+      const stalpiMontati = Number(montajSummary.stalpi_montati ?? 0)
+      const stalpiRamasi = Number(montajSummary.stalpi_ramasi ?? 0)
+      const stalpiInVerificare = Number(montajSummary.stalpi_in_verificare ?? 0)
+      const procentMontat = Number(montajSummary.procent_montat ?? 0)
 
       const mergedSummary = {
         ...detailsData.summary,
-        stalpi_eligibili: montajSummary.stalpi_eligibili || 0,
-        stalpi_montati: montajSummary.stalpi_montati || 0,
-        stalpi_ramasi: montajSummary.stalpi_ramasi || 0,
-        stalpi_in_verificare: montajSummary.stalpi_in_verificare || 0,
-        procent_montat: Number(montajSummary.procent_montat || 0),
-        puncte_montate_actual:
-          montajSummary.stalpi_montati || detailsData.summary.puncte_montate || 0,
-        puncte_ramase_actual:
-          montajSummary.stalpi_ramasi || detailsData.summary.puncte_ramase_montaj || 0,
-        marja_estimativa: montajSummary.marja_estimativa ?? null,
-        marja_la_zi: montajSummary.marja_la_zi ?? null,
+        stalpi_eligibili: stalpiEligibili,
+        stalpi_montati: stalpiMontati,
+        stalpi_ramasi: stalpiRamasi,
+        stalpi_in_verificare: stalpiInVerificare,
+        procent_montat: procentMontat,
+        puncte_montate_actual: stalpiMontati,
+        puncte_ramase_actual: stalpiRamasi,
+        marja_estimativa:
+          montajSummary.marja_estimativa != null
+            ? Number(montajSummary.marja_estimativa)
+            : null,
+        marja_la_zi:
+          montajSummary.marja_la_zi != null
+            ? Number(montajSummary.marja_la_zi)
+            : null,
       }
 
       setJudetDetails({
@@ -532,3 +581,4 @@ export default function App() {
     </div>
   )
 }
+". modifica-l tu direct
